@@ -1,0 +1,5 @@
+﻿  UI.cpp
+e:\game\c++game\mygame\mygame\ui.h(30): warning C4091: “static ”: 没有声明变量时忽略“UI”的左侧
+e:\game\c++game\mygame\mygame\savegame.h(8): warning C4091: “static ”: 没有声明变量时忽略“SaveGame”的左侧
+e:\game\c++game\mygame\mygame\ui.cpp(476): warning C4018: “<”: 有符号/无符号不匹配
+  MyGame.vcxproj -> E:\GAME\C++game\MyGame\Debug\MyGame.exe
