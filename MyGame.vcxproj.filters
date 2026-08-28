@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="源文件">
@@ -9,109 +9,120 @@
       <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;ipp;xsd</Extensions>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    <Filter Include="Model">
+      <UniqueIdentifier>{11111111-1111-1111-1111-111111111111}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="View">
+      <UniqueIdentifier>{22222222-2222-2222-2222-222222222222}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Controller">
+      <UniqueIdentifier>{33333333-3333-3333-3333-333333333333}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Network">
+      <UniqueIdentifier>{44444444-4444-4444-4444-444444444444}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Common">
+      <UniqueIdentifier>{55555555-5555-5555-5555-555555555555}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="stdafx.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\common\Common.h">
+      <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="targetver.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\common\Protocol.h">
+      <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="Character.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\common\Snapshot.h">
+      <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="Controller.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Consumable.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Item.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Equipment.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Map.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\GameData.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Equipment.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\GameState.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Using.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Inventory.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="UI.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Item.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Monster.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Monster.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Manager.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\Player.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="SaveGame.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\model\WorldMap.h">
+      <Filter>Model</Filter>
     </ClInclude>
-    <ClInclude Include="Misson.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\view\ConsoleRenderer.h">
+      <Filter>View</Filter>
     </ClInclude>
-    <ClInclude Include="NPC.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\controller\GameController.h">
+      <Filter>Controller</Filter>
     </ClInclude>
-    <ClInclude Include="ENPC.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\net\NetClient.h">
+      <Filter>Network</Filter>
     </ClInclude>
-    <ClInclude Include="UNPC.h">
-      <Filter>头文件</Filter>
+    <ClInclude Include="src\net\NetServer.h">
+      <Filter>Network</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="stdafx.cpp">
+    <ClCompile Include="src\main.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="MyGame.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\common\Protocol.cpp">
+      <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="Controller.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\common\Snapshot.cpp">
+      <Filter>Common</Filter>
     </ClCompile>
-    <ClCompile Include="Character.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Consumable.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Map.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Equipment.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Item.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\GameData.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="UI.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\GameState.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Equipment.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Inventory.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Using.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Item.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Monster.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Monster.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="Manager.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\Player.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="SaveGame.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\model\WorldMap.cpp">
+      <Filter>Model</Filter>
     </ClCompile>
-    <ClCompile Include="NPC.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\view\ConsoleRenderer.cpp">
+      <Filter>View</Filter>
     </ClCompile>
-    <ClCompile Include="Misson.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\controller\GameController.cpp">
+      <Filter>Controller</Filter>
     </ClCompile>
-    <ClCompile Include="ENPC.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\net\NetClient.cpp">
+      <Filter>Network</Filter>
     </ClCompile>
-    <ClCompile Include="UNPC.cpp">
-      <Filter>源文件</Filter>
+    <ClCompile Include="src\net\NetServer.cpp">
+      <Filter>Network</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -1,0 +1,1 @@
+Release\MyGame.exe --server 8888

@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+
+# Visual Studio 生成目录
+Debug/
+Release/
+x64/
+MyGame/
+.vs/
+
+# 存档文件
+savegame.txt
+server_save.txt
