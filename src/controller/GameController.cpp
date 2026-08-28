@@ -41,6 +41,7 @@ int GameController::doLocalLogin() {
             case '1': {
                 renderer_.clear();
                 std::cout << "请输入角色名称:" << std::endl;
+                renderer_.present();
                 std::string name;
                 std::cin >> name;
                 const auto& p = state_->addPlayer(name);
@@ -234,6 +235,7 @@ int GameController::runClient(const std::string& host, int port) {
 
     renderer_.clear();
     std::cout << "请输入角色名称:" << std::endl;
+    renderer_.present();
     std::string name;
     std::cin >> name;
     client.sendCommand("LOGIN " + sanitizeName(name));

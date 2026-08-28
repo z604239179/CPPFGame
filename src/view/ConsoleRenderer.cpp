@@ -2,12 +2,53 @@
 
 #include <algorithm>
 #include <iostream>
+#include <streambuf>
+#include <string>
 
 #include <windows.h>
 
 #include "model/GameData.h"
 
 namespace game {
+
+// ---- 自定义 streambuf：将 std::cout 输出重定向到指定控制台屏幕缓冲区 ----
+
+class ConsoleRenderer::ConsoleStreamBuf : public std::streambuf {
+public:
+    explicit ConsoleStreamBuf(HANDLE h) : handle_(h) {}
+
+    void setHandle(HANDLE h) { handle_ = h; }
+
+protected:
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        if (n <= 0 || !handle_ || handle_ == INVALID_HANDLE_VALUE) return 0;
+        writeText(s, static_cast<int>(n));
+        return n;
+    }
+
+    int overflow(int c) override {
+        if (c == traits_type::eof()) return traits_type::eof();
+        char ch = static_cast<char>(c);
+        writeText(&ch, 1);
+        return c;
+    }
+
+    int sync() override { return 0; }  // WriteConsole 即时写入，无需刷新
+
+private:
+    void writeText(const char* s, int len) {
+        if (len <= 0) return;
+        // UTF-8 转 UTF-16 后用 WriteConsoleW 写入，保证中文等字符正确显示
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, s, len, nullptr, 0);
+        if (wlen <= 0) return;
+        std::wstring wstr(static_cast<size_t>(wlen), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s, len, wstr.data(), wlen);
+        DWORD written = 0;
+        WriteConsoleW(handle_, wstr.data(), static_cast<DWORD>(wlen), &written, nullptr);
+    }
+
+    HANDLE handle_;
+};
 
 namespace {
 WORD toWindowsColor(ConsoleColor color) {
@@ -24,10 +65,87 @@ WORD toWindowsColor(ConsoleColor color) {
 }
 }  // namespace
 
-void ConsoleRenderer::clear() const { system("cls"); }
+// ---- 构造 / 析构 ----
+
+ConsoleRenderer::ConsoleRenderer() {
+    ensureInit();
+}
+
+ConsoleRenderer::~ConsoleRenderer() {
+    // 恢复 std::cout 原始 streambuf
+    if (originalCoutBuf_) {
+        std::cout.rdbuf(originalCoutBuf_);
+    }
+}
+
+// ---- 双缓冲初始化 ----
+
+void ConsoleRenderer::ensureInit() const {
+    if (initialized_) return;
+    initialized_ = true;
+
+    originalStdout_ = GetStdHandle(STD_OUTPUT_HANDLE);
+    frontBuffer_ = originalStdout_;
+
+    backBuffer_ = CreateConsoleScreenBuffer(
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        nullptr,
+        CONSOLE_TEXTMODE_BUFFER,
+        nullptr);
+
+    if (backBuffer_ == INVALID_HANDLE_VALUE) {
+        // 创建失败，回退到单缓冲（仍有闪烁，但至少能正常工作）
+        backBuffer_ = originalStdout_;
+        return;
+    }
+
+    // 将后台缓冲区的尺寸和窗口对齐到前台缓冲区
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (GetConsoleScreenBufferInfo(frontBuffer_, &info)) {
+        // 先放大缓冲区，确保窗口能放下
+        COORD tempSize = {100, 100};
+        SetConsoleScreenBufferSize(backBuffer_, tempSize);
+        SetConsoleWindowInfo(backBuffer_, TRUE, &info.srWindow);
+        SetConsoleScreenBufferSize(backBuffer_, info.dwSize);
+    }
+
+    // 启用控制字符处理（\n 换行、\t 制表等）
+    SetConsoleMode(backBuffer_, ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT);
+
+    // 将 std::cout 重定向到后台缓冲区
+    backBuf_ = std::make_unique<ConsoleStreamBuf>(backBuffer_);
+    originalCoutBuf_ = std::cout.rdbuf(backBuf_.get());
+}
+
+// ---- 清屏：在后台缓冲区上操作（不可见，无闪烁）----
+
+void ConsoleRenderer::clear() const {
+    ensureInit();
+    COORD home = {0, 0};
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (GetConsoleScreenBufferInfo(backBuffer_, &info)) {
+        DWORD cells = static_cast<DWORD>(info.dwSize.X) * static_cast<DWORD>(info.dwSize.Y);
+        DWORD written = 0;
+        FillConsoleOutputCharacterW(backBuffer_, L' ', cells, home, &written);
+        FillConsoleOutputAttribute(backBuffer_, toWindowsColor(ConsoleColor::Normal), cells, home, &written);
+    }
+    SetConsoleCursorPosition(backBuffer_, home);
+}
 
 void ConsoleRenderer::setColor(ConsoleColor color) const {
-    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), toWindowsColor(color));
+    ensureInit();
+    SetConsoleTextAttribute(backBuffer_, toWindowsColor(color));
+}
+
+// ---- 切换缓冲区：将后台内容一次性显示到屏幕 ----
+
+void ConsoleRenderer::present() const {
+    ensureInit();
+    if (backBuffer_ == frontBuffer_) return;  // 单缓冲回退模式，无需切换
+    SetConsoleActiveScreenBuffer(backBuffer_);
+    std::swap(frontBuffer_, backBuffer_);
+    if (backBuf_) backBuf_->setHandle(backBuffer_);
 }
 
 void ConsoleRenderer::printLoginMenu() const {
@@ -42,6 +160,7 @@ void ConsoleRenderer::printLoginMenu() const {
     std::cout << "==========================================\n";
     std::cout << "\n                              Version: Beta";
     setColor(ConsoleColor::Normal);
+    present();
 }
 
 void ConsoleRenderer::printAbout() const {
@@ -62,6 +181,7 @@ void ConsoleRenderer::printAbout() const {
     setColor(ConsoleColor::Yellow);
     std::cout << "\t制作人：Ssaturday（重构版）\n";
     setColor(ConsoleColor::Normal);
+    present();
     system("pause");
 }
 
@@ -85,6 +205,7 @@ void ConsoleRenderer::printMain(const WorldSnapshot& snap,
     const PlayerView* self = findSelf(snap);
     if (!self) {
         std::cout << "正在等待服务器同步……" << std::endl;
+        present();
         return;
     }
 
@@ -104,6 +225,7 @@ void ConsoleRenderer::printMain(const WorldSnapshot& snap,
     printPlayers(snap);
     printMessages(messages);
     std::cout << "WASD移动  1/2/3互动  I背包  C状态  M任务  P保存  Q退出" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printMap(const WorldSnapshot& snap) const {
@@ -238,7 +360,7 @@ void ConsoleRenderer::printItemName(char tag, int id) const {
 void ConsoleRenderer::printInventory(const WorldSnapshot& snap, int page) const {
     clear();
     const PlayerView* self = findSelf(snap);
-    if (!self) return;
+    if (!self) { present(); return; }
 
     std::cout << "===== 背包 第" << (page + 1) << "/3 页 =====" << std::endl;
     for (int i = 0; i < 10; ++i) {
@@ -256,12 +378,13 @@ void ConsoleRenderer::printInventory(const WorldSnapshot& snap, int page) const 
         }
     }
     std::cout << std::endl << "0-9 查看物品  J下一页  K上一页  L返回" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printItemDetail(const WorldSnapshot& snap, int slot) const {
     clear();
     const PlayerView* self = findSelf(snap);
-    if (!self) return;
+    if (!self) { present(); return; }
 
     const ItemView* found = nullptr;
     for (const auto& it : self->inventory) {
@@ -269,6 +392,7 @@ void ConsoleRenderer::printItemDetail(const WorldSnapshot& snap, int slot) const
     }
     if (!found) {
         std::cout << "该格为空。" << std::endl;
+        present();
         return;
     }
 
@@ -297,12 +421,13 @@ void ConsoleRenderer::printItemDetail(const WorldSnapshot& snap, int slot) const
     }
     std::cout << std::endl << std::endl;
     std::cout << "J 使用/装备  K 丢弃  S 出售  L 返回" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printStatus(const WorldSnapshot& snap) const {
     clear();
     const PlayerView* self = findSelf(snap);
-    if (!self) return;
+    if (!self) { present(); return; }
 
     std::cout << "名称:" << self->name << "  等级:" << self->level
               << "  金币:" << self->gold << std::endl;
@@ -325,12 +450,13 @@ void ConsoleRenderer::printStatus(const WorldSnapshot& snap) const {
         std::cout << std::endl;
     }
     std::cout << std::endl << "                                    L--返回" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printMission(const WorldSnapshot& snap) const {
     clear();
     const PlayerView* self = findSelf(snap);
-    if (!self) return;
+    if (!self) { present(); return; }
 
     const auto* mission = GameData::missionById(self->missionId);
     std::cout << "===== 任务 =====" << std::endl;
@@ -348,12 +474,13 @@ void ConsoleRenderer::printMission(const WorldSnapshot& snap) const {
         }
     }
     std::cout << std::endl << "                                    L--返回" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printCombat(const WorldSnapshot& snap) const {
     clear();
     const PlayerView* self = findSelf(snap);
-    if (!self) return;
+    if (!self) { present(); return; }
 
     std::cout << "===== 战斗 =====" << std::endl;
     printBar("HP", self->stats.hp, self->stats.maxHp, ConsoleColor::Red);
@@ -370,6 +497,7 @@ void ConsoleRenderer::printCombat(const WorldSnapshot& snap) const {
         printBar("怪HP", o.hp, o.maxHp, ConsoleColor::Red);
     }
     std::cout << std::endl << "1.攻击  2.技能攻击  3.使用物品  4.逃跑" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printShop(const WorldSnapshot& snap, NpcRole role) const {
@@ -398,6 +526,7 @@ void ConsoleRenderer::printShop(const WorldSnapshot& snap, NpcRole role) const {
         std::cout << "这里没有商店。" << std::endl;
     }
     std::cout << std::endl << "输入数字购买, L 返回" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printNpcMenu(const std::vector<std::string>& messages, bool hasShop) const {
@@ -406,11 +535,13 @@ void ConsoleRenderer::printNpcMenu(const std::vector<std::string>& messages, boo
     std::cout << std::endl;
     std::cout << "1.任务  2.交易  3.离开" << std::endl;
     if (!hasShop) std::cout << "(这位 NPC 没有商店)" << std::endl;
+    present();
 }
 
 void ConsoleRenderer::printMessage(const std::string& text) const {
     clear();
     std::cout << text << std::endl;
+    present();
     Sleep(1500);
 }
 
