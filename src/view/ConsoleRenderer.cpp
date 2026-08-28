@@ -63,6 +63,28 @@ WORD toWindowsColor(ConsoleColor color) {
         default:                   return 7;
     }
 }
+
+// 按终端显示宽度截断字符串（ASCII 记 1 列，中文等记 2 列），防止日志过长换行打乱布局
+std::string truncateByWidth(const std::string& s, int maxCols) {
+    if (maxCols <= 0) return "";
+    std::string out;
+    int width = 0;
+    size_t i = 0;
+    while (i < s.size()) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len = 1;
+        if (c >= 0xF0)      len = 4;
+        else if (c >= 0xE0) len = 3;
+        else if (c >= 0xC0) len = 2;
+        if (i + len > s.size()) len = s.size() - i;
+        const int w = (c < 0x80) ? 1 : 2;
+        if (width + w > maxCols) break;
+        out.append(s, i, len);
+        width += w;
+        i += len;
+    }
+    return out;
+}
 }  // namespace
 
 // ---- 构造 / 析构 ----
@@ -129,6 +151,15 @@ void ConsoleRenderer::clear() const {
         DWORD written = 0;
         FillConsoleOutputCharacterW(backBuffer_, L' ', cells, home, &written);
         FillConsoleOutputAttribute(backBuffer_, toWindowsColor(ConsoleColor::Normal), cells, home, &written);
+        // 重置窗口位置到左上角，避免 cin 回显导致窗口滚动后内容不可见
+        SMALL_RECT win = info.srWindow;
+        const SHORT w = win.Right - win.Left;
+        const SHORT h = win.Bottom - win.Top;
+        win.Left = 0;
+        win.Top = 0;
+        win.Right = w;
+        win.Bottom = h;
+        SetConsoleWindowInfo(backBuffer_, TRUE, &win);
     }
     SetConsoleCursorPosition(backBuffer_, home);
 }
@@ -153,12 +184,12 @@ void ConsoleRenderer::printLoginMenu() const {
     setColor(ConsoleColor::Yellow);
     std::cout << "\n\n\n";
     std::cout << "================ 冒险大陆 ================\n";
-    std::cout << "+           1. 开始新游戏               +\n";
-    std::cout << "+           2. 读取存档                 +\n";
+    std::cout << "+           1. 登录账号                 +\n";
+    std::cout << "+           2. 注册账号                 +\n";
     std::cout << "+           3. 关于制作                 +\n";
     std::cout << "+           4. 退出游戏                 +\n";
     std::cout << "==========================================\n";
-    std::cout << "\n                              Version: Beta";
+    std::cout << "\n                              Version: MMO";
     setColor(ConsoleColor::Normal);
     present();
 }
@@ -173,8 +204,10 @@ void ConsoleRenderer::printAbout() const {
     std::cout << "●\t\t玩家\n";
     setColor(ConsoleColor::Purple);
     std::cout << "◆\t\tNPC\n";
+    setColor(ConsoleColor::Red);
+    std::cout << "M\t\t怪物（走上自动战斗，击杀后定时刷新）\n";
     setColor(ConsoleColor::Normal);
-    std::cout << "■\t\t安全区\n";
+    std::cout << "■\t\t安全区 / 复活点\n";
     setColor(ConsoleColor::Cyan);
     std::cout << "O\t\t传送门\n\n\n";
 
@@ -199,6 +232,16 @@ void ConsoleRenderer::printBar(const char* label, int cur, int max, ConsoleColor
     std::cout << "]" << std::endl;
 }
 
+// 将光标定位到当前行的指定列（用于地图右侧日志面板对齐）
+void ConsoleRenderer::setCursorCol(int col) const {
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    if (!GetConsoleScreenBufferInfo(backBuffer_, &info)) return;
+    COORD pos;
+    pos.X = static_cast<SHORT>(col);
+    pos.Y = info.dwCursorPosition.Y;
+    SetConsoleCursorPosition(backBuffer_, pos);
+}
+
 void ConsoleRenderer::printMain(const WorldSnapshot& snap,
                                 const std::vector<std::string>& messages) const {
     clear();
@@ -220,17 +263,43 @@ void ConsoleRenderer::printMain(const WorldSnapshot& snap,
     if (self->inCombat) std::cout << "  [战斗中]";
     std::cout << std::endl << std::endl;
 
-    printMap(snap);
+    printMap(snap, messages);  // 地图 + 右侧日志面板
     printOccupants(snap);
     printPlayers(snap);
-    printMessages(messages);
-    std::cout << "WASD移动  1/2/3互动  I背包  C状态  M任务  P保存  Q退出" << std::endl;
+    if (self->inCombat) {
+        std::cout << "【战斗中】 ";
+        for (int i = 0; i < kSkillCount; ++i) {
+            const SkillDef& sk = skillDef(i);
+            setColor(i == 2 ? ConsoleColor::Green : ConsoleColor::Yellow);
+            std::cout << sk.key << "." << sk.name << "(MP" << sk.mpCost << ") ";
+        }
+        setColor(ConsoleColor::Normal);
+        std::cout << "| 1-4使用消耗品 F逃跑" << std::endl;
+    } else {
+        std::cout << "WASD移动  走上怪物格自动战斗  1对话NPC  I背包  C状态  M任务  P保存  Esc退出" << std::endl;
+    }
     present();
 }
 
-void ConsoleRenderer::printMap(const WorldSnapshot& snap) const {
+void ConsoleRenderer::printMap(const WorldSnapshot& snap,
+                               const std::vector<std::string>& messages) const {
     const PlayerView* self = findSelf(snap);
     if (!self) return;
+
+    // 日志面板起始列（地图最宽约 40 列）与面板可容纳的最大显示宽度
+    CONSOLE_SCREEN_BUFFER_INFO sbInfo = {};
+    int bufWidth = 100;
+    if (GetConsoleScreenBufferInfo(backBuffer_, &sbInfo)) bufWidth = sbInfo.dwSize.X;
+    constexpr int kLogCol = 42;
+    const int logMaxCols = bufWidth > kLogCol + 4 ? bufWidth - kLogCol - 4 : 30;
+
+    // 右侧日志面板：第 0 行为标题，其后按顺序显示最近日志（最多占满地图 20 行）
+    std::string panel[kMapSize];
+    panel[0] = "—— 消息日志 ——";
+    const size_t logCount = (std::min)(messages.size(), static_cast<size_t>(kMapSize - 1));
+    for (size_t i = 0; i < logCount; ++i) {
+        panel[1 + i] = "> " + messages[messages.size() - logCount + i];
+    }
 
     const auto& layout = GameData::layouts()[self->mapId];
     for (int x = 0; x < kMapSize; ++x) {
@@ -248,6 +317,22 @@ void ConsoleRenderer::printMap(const WorldSnapshot& snap) const {
                 std::cout << (isSelf ? "●" : "@");
                 continue;
             }
+            // 怪物直接显示在地图格子上（按品质着色），走上该格自动进入战斗
+            bool monsterHere = false;
+            for (const auto& m : snap.mapMonsters) {
+                if (m.x == x && m.y == y) {
+                    switch (m.quality) {
+                        case ItemQuality::Unusual: setColor(ConsoleColor::Blue);   break;
+                        case ItemQuality::Epic:    setColor(ConsoleColor::Purple); break;
+                        case ItemQuality::Legend:  setColor(ConsoleColor::Yellow); break;
+                        default:                   setColor(ConsoleColor::Red);    break;
+                    }
+                    std::cout << "M";
+                    monsterHere = true;
+                    break;
+                }
+            }
+            if (monsterHere) continue;
             switch (static_cast<TileType>(layout[x][y])) {
                 case TileType::Space:
                     std::cout << " ";
@@ -273,6 +358,15 @@ void ConsoleRenderer::printMap(const WorldSnapshot& snap) const {
                     std::cout << "O";
                     break;
             }
+        }
+        // 行尾：定位到右侧日志列，输出该行对应的日志（过长自动截断，避免换行打乱布局）
+        setColor(ConsoleColor::Normal);
+        setCursorCol(kLogCol);
+        std::cout << "│ ";
+        if (!panel[x].empty()) {
+            if (x == 0) setColor(ConsoleColor::Yellow);
+            std::cout << truncateByWidth(panel[x], logMaxCols);
+            setColor(ConsoleColor::Normal);
         }
         std::cout << std::endl;
     }

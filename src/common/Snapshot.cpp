@@ -104,6 +104,26 @@ bool parseSnapshot(const std::string& payload, WorldSnapshot& out) {
         ov.quality = static_cast<ItemQuality>(std::atoi(f[7].c_str()));
         out.occupants.push_back(ov);
     }
+
+    // 地图怪物段（把怪物画到地图上）：monCount 后跟 x:y:name:level:quality
+    out.mapMonsters.clear();
+    const int monCountIndex = occCountIndex + 1 + occCount;
+    if (monCountIndex >= static_cast<int>(parts.size())) return true;
+    const int monCount = std::atoi(parts[monCountIndex].c_str());
+    out.mapMonsters.reserve(monCount);
+    for (int i = 0; i < monCount; ++i) {
+        const int idx = monCountIndex + 1 + i;
+        if (idx >= static_cast<int>(parts.size())) break;
+        const auto f = splitString(parts[idx], ':');
+        if (f.size() < 5) continue;
+        MapMonsterView mv;
+        mv.x = std::atoi(f[0].c_str());
+        mv.y = std::atoi(f[1].c_str());
+        mv.name = f[2];
+        mv.level = std::atoi(f[3].c_str());
+        mv.quality = static_cast<ItemQuality>(std::atoi(f[4].c_str()));
+        out.mapMonsters.push_back(mv);
+    }
     return true;
 }
 

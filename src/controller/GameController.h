@@ -10,30 +10,24 @@
 
 namespace game {
 
-class GameState;
 class NetClient;
 
-// 控制器（Controller）：把输入翻译成模型动作，并驱动视图渲染
+// 控制器（Controller）：把输入翻译成指令发送给服务器，并驱动视图渲染
 class GameController {
 public:
     GameController();
     ~GameController();
-    int runLocal();
     int runClient(const std::string& host, int port);
 
 private:
-    // ---- 单机模式 ----
-    int doLocalLogin();
-    void localMainLoop(int selfId);
-    void localInventoryLoop(int selfId);
-    void localItemDetail(int selfId, int slot);
-    void localStatusLoop(int selfId);
-    void localMissionLoop(int selfId);
-    void localCombatLoop(int selfId);
-    void localDialogueLoop(int selfId, int slot);
-    void localShopLoop(int selfId, NpcRole role);
+    // ---- 登录 / 注册交互（返回是否已进入游戏）----
+    bool loginLoop(NetClient& client, std::deque<std::string>& messages, WorldSnapshot& snap);
+    bool doLoginInput(NetClient& client, std::deque<std::string>& messages, WorldSnapshot& snap);
+    bool doRegisterInput(NetClient& client, std::deque<std::string>& messages, WorldSnapshot& snap);
+    // 拉取一次服务器消息，若收到 STATE 则视为登录成功
+    bool pumpOnce(NetClient& client, std::deque<std::string>& messages, WorldSnapshot& snap);
 
-    // ---- 联机客户端模式 ----
+    // ---- 联机游戏各界面 ----
     void clientDialogueMode(NetClient& client, std::deque<std::string>& messages,
                             WorldSnapshot& snap, int slot);
     void clientShopMode(NetClient& client, std::deque<std::string>& messages,
@@ -47,7 +41,6 @@ private:
     void clientMissionMode(NetClient& client, std::deque<std::string>& messages,
                            WorldSnapshot& snap);
 
-    std::unique_ptr<GameState> state_;
     ConsoleRenderer renderer_;
 };
 

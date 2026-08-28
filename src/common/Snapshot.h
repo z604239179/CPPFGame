@@ -47,11 +47,21 @@ struct OccupantView {
     ItemQuality quality = ItemQuality::Normal;
 };
 
+// 客户端视角的地图上怪物（用于把怪物画到地图格子上）
+struct MapMonsterView {
+    int x = 0;
+    int y = 0;
+    std::string name;
+    int level = 0;
+    ItemQuality quality = ItemQuality::Normal;
+};
+
 // 一次完整的世界快照（服务器 -> 客户端）
 struct WorldSnapshot {
     int selfId = 0;
     std::vector<PlayerView> players;
-    std::vector<OccupantView> occupants;  // 自己所在格子的怪物 / NPC
+    std::vector<OccupantView> occupants;      // 自己所在格子的怪物 / NPC
+    std::vector<MapMonsterView> mapMonsters;  // 自己所在地图的所有怪物
 };
 
 // 解析 "S|..." 形式的快照字符串

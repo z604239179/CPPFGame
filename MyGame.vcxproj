@@ -167,6 +167,7 @@
     <ClInclude Include="src\controller\GameController.h" />
     <ClInclude Include="src\net\NetClient.h" />
     <ClInclude Include="src\net\NetServer.h" />
+    <ClInclude Include="src\net\AccountManager.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
@@ -185,6 +186,7 @@
     <ClCompile Include="src\controller\GameController.cpp" />
     <ClCompile Include="src\net\NetClient.cpp" />
     <ClCompile Include="src\net\NetServer.cpp" />
+    <ClCompile Include="src\net\AccountManager.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

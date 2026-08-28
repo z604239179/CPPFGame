@@ -41,7 +41,8 @@ private:
 
     void ensureInit() const;
     void printBar(const char* label, int cur, int max, ConsoleColor color) const;
-    void printMap(const WorldSnapshot& snap) const;
+    void setCursorCol(int col) const;
+    void printMap(const WorldSnapshot& snap, const std::vector<std::string>& messages) const;
     void printOccupants(const WorldSnapshot& snap) const;
     void printPlayers(const WorldSnapshot& snap) const;
     void printMessages(const std::vector<std::string>& messages) const;

@@ -1,7 +1,10 @@
 #include "model/WorldMap.h"
 
-#include <cstdlib>
+#include <algorithm>
+#include <random>
+#include <utility>
 
+#include "common/Common.h"
 #include "model/GameData.h"
 
 namespace game {
@@ -24,23 +27,29 @@ void WorldMap::spawnOccupants() {
     int npcIndex = 0;
     const auto& npcs = GameData::npcsForMap(mapId);
 
+    // 收集所有空地，洗牌后取前 kMonstersPerMap 块刷怪（均匀分布、固定数量）
+    std::vector<std::pair<int, int>> emptySpaces;
     for (int x = 0; x < kMapSize; ++x) {
         for (int y = 0; y < kMapSize; ++y) {
-            Tile& tile = tiles_[x][y];
-            if (tile.type == TileType::Space) {
-                // 每块空地放 3 只怪物（与原版一致）
-                for (int k = 0; k < 3; ++k) {
-                    const auto* def = GameData::randomMonster();
-                    tile.occupants.emplace_back(def->id, def->name, def->level, def->quality);
-                }
-            } else if (tile.type == TileType::People && npcIndex < static_cast<int>(npcs.size())) {
+            if (tiles_[x][y].type == TileType::Space) {
+                emptySpaces.emplace_back(x, y);
+            } else if (tiles_[x][y].type == TileType::People &&
+                       npcIndex < static_cast<int>(npcs.size())) {
                 const auto& def = npcs[npcIndex++];
                 Monster npc(def.id, def.name, def.level, ItemQuality::Legend);
                 npc.isNpc = true;
                 npc.role = def.role;
-                tile.occupants.push_back(std::move(npc));
+                tiles_[x][y].occupants.push_back(std::move(npc));
             }
         }
+    }
+
+    std::shuffle(emptySpaces.begin(), emptySpaces.end(),
+                 std::mt19937(std::random_device{}()));
+    const int spawnCount = std::min(kMonstersPerMap,
+                                    static_cast<int>(emptySpaces.size()));
+    for (int i = 0; i < spawnCount; ++i) {
+        spawnMonsterAt(emptySpaces[i].first, emptySpaces[i].second);
     }
 }
 
@@ -62,11 +71,31 @@ const Monster* WorldMap::occupantAt(int x, int y, int slot) const {
     return (slot >= 0 && slot < static_cast<int>(occs.size())) ? &occs[slot] : nullptr;
 }
 
-void WorldMap::respawnMonsterAt(int x, int y, int slot) {
-    auto* occ = occupantAt(x, y, slot);
-    if (!occ || occ->isNpc) return;
+void WorldMap::spawnMonsterAt(int x, int y) {
+    if (x < 0 || x >= kMapSize || y < 0 || y >= kMapSize) return;
+    Tile& tile = tiles_[x][y];
+    if (tile.type != TileType::Space) return;  // 只在空地刷怪，不覆盖 NPC
     const auto* def = GameData::randomMonster();
-    *occ = Monster(def->id, def->name, def->level, def->quality);
+    if (tile.occupants.empty()) {
+        tile.occupants.emplace_back(def->id, def->name, def->level, def->quality);
+    } else if (!tile.occupants[0].isNpc) {
+        tile.occupants[0] = Monster(def->id, def->name, def->level, def->quality);
+    }
+}
+
+bool WorldMap::tick(long long nowMsValue) {
+    bool changed = false;
+    for (int x = 0; x < kMapSize; ++x) {
+        for (int y = 0; y < kMapSize; ++y) {
+            Tile& tile = tiles_[x][y];
+            if (tile.respawnAtMs != 0 && nowMsValue >= tile.respawnAtMs) {
+                tile.respawnAtMs = 0;
+                spawnMonsterAt(x, y);
+                changed = true;
+            }
+        }
+    }
+    return changed;
 }
 
 }  // namespace game

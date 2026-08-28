@@ -73,6 +73,15 @@ Player& GameState::addPlayer(const std::string& name) {
     return players_.back();
 }
 
+Player& GameState::addPlayer(Player p) {
+    // 登录复用存档数据，但 id 由世界重新分配（存档 id 仅用于账号内部，无全局意义）
+    p.id = nextPlayerId_++;
+    p.inCombat = false;
+    p.combatSlot = -1;
+    players_.push_back(std::move(p));
+    return players_.back();
+}
+
 void GameState::removePlayer(int id) {
     players_.erase(std::remove_if(players_.begin(), players_.end(),
                                   [id](const Player& p) { return p.id == id; }),
@@ -109,6 +118,12 @@ bool GameState::movePlayer(int id, Direction dir) {
     }
 
     p->pos = target;
+
+    // 走上怪物所在格子时自动进入战斗
+    const auto& occs = map.tiles_[target.x][target.y].occupants;
+    if (!occs.empty() && !occs[0].isNpc) {
+        startFight(id, 0);
+    }
     return true;
 }
 
@@ -121,6 +136,7 @@ bool GameState::startFight(int id, int slot) {
 
     p->inCombat = true;
     p->combatSlot = slot;
+    p->lastCombatAtMs = nowMs();
     addMessage("你遭遇了" + occ->name + "（Lv." + std::to_string(occ->level) + "）！");
     return true;
 }
@@ -129,50 +145,157 @@ Monster* GameState::combatMonster(Player& p) {
     return mapOf(p).occupantAt(p.pos.x, p.pos.y, p.combatSlot);
 }
 
-bool GameState::fightRound(int id, FightAction action) {
+// 对怪物造成伤害；返回 true 若怪物死亡
+bool GameState::applyCombatDamage(Player& attacker, Monster& target, float damageMult) {
+    const int raw = static_cast<int>(attacker.stats.atk * damageMult);
+    const int damage = std::max(1, raw - target.stats.def);
+    target.stats.hp -= damage;
+    addMessage(attacker.name + "对" + target.name + "造成了 " + std::to_string(damage) + " 点伤害。");
+    return target.stats.hp <= 0;
+}
+
+// 怪物反击
+void GameState::counterAttack(Player& p, Monster& m) {
+    const int mDamage = std::max(1, m.stats.atk - p.stats.def);
+    p.stats.hp -= mDamage;
+    addMessage(m.name + "对" + p.name + "造成了 " + std::to_string(mDamage) + " 点伤害。");
+    if (p.stats.hp <= 0) {
+        p.stats.hp = p.stats.maxHp / 2;
+        p.stats.mp = p.stats.maxMp / 2;
+        p.inCombat = false;
+        p.combatSlot = -1;
+        // 死亡：传送到城镇复活点（安全区）半血复活
+        p.mapId = kReviveMapId;
+        p.pos = kRevivePos;
+        addMessage(p.name + "战斗失败，已在城镇复活点复活。");
+    }
+}
+
+// 怪物死亡：给击杀者奖励 + 清同格所有战斗玩家 + 调度重生
+void GameState::endMonsterCombat(const Player& killer) {
+    WorldMap& wmap = maps_[killer.mapId];
+    const int kx = killer.pos.x;
+    const int ky = killer.pos.y;
+    // 可能怪物已被其他玩家抢先击杀
+    if (!wmap.tiles_[kx][ky].occupants.empty() && !wmap.tiles_[kx][ky].occupants[0].isNpc) {
+        // 给最后一击者发奖励；多人击杀可改为均分，这里保持谁最后一下谁拿
+        Player* pk = findPlayer(killer.id);
+        if (pk) grantRewards(*pk, wmap.tiles_[kx][ky].occupants[0]);
+        wmap.tiles_[kx][ky].occupants.clear();
+        wmap.tiles_[kx][ky].respawnAtMs = nowMs() + kMonsterRespawnMs;
+    }
+    // 清除所有在同格的战斗状态
+    for (auto& other : players_) {
+        if (other.inCombat && other.mapId == killer.mapId &&
+            other.pos.x == kx && other.pos.y == ky) {
+            other.inCombat = false;
+            other.combatSlot = -1;
+        }
+    }
+}
+
+bool GameState::normalAttack(int id) {
+    Player* p = findPlayer(id);
+    if (!p || !p->inCombat) return false;
+    Monster* m = combatMonster(*p);
+    if (!m) { p->inCombat = false; p->combatSlot = -1; return false; }
+
+    p->lastCombatAtMs = nowMs();
+    if (applyCombatDamage(*p, *m, 1.0f)) {
+        endMonsterCombat(*p);
+        return true;
+    }
+    counterAttack(*p, *m);
+    return true;
+}
+
+bool GameState::useSkill(int id, int skillIndex) {
+    Player* p = findPlayer(id);
+    if (!p || !p->inCombat) return false;
+    if (skillIndex < 0 || skillIndex >= kSkillCount) return false;
+
+    const SkillDef& sk = skillDef(skillIndex);
+    if (p->stats.mp < sk.mpCost) {
+        // MP 不足：降级为普通攻击（不给提示，用户不输入时默认普攻也有同样行为）
+        return normalAttack(id);
+    }
+    p->stats.mp -= sk.mpCost;
+    p->lastCombatAtMs = nowMs();
+
+    Monster* m = combatMonster(*p);
+
+    // 治疗术
+    if (sk.healPercent > 0) {
+        const int heal = p->stats.maxHp * sk.healPercent / 100;
+        p->stats.hp = std::min(p->stats.hp + heal, p->stats.maxHp);
+        addMessage(p->name + "施放" + std::string(sk.name) + "，恢复 " + std::to_string(heal) + " 点生命。");
+        if (m) counterAttack(*p, *m);
+        return true;
+    }
+
+    if (!m) { p->inCombat = false; p->combatSlot = -1; return false; }
+
+    if (applyCombatDamage(*p, *m, sk.damageMult)) {
+        endMonsterCombat(*p);
+        return true;
+    }
+    counterAttack(*p, *m);
+    return true;
+}
+
+bool GameState::useCombatItem(int id, int invSlot) {
     Player* p = findPlayer(id);
     if (!p || !p->inCombat) return false;
 
+    Item* item = p->inventory.itemAt(invSlot);
+    if (!item || item->typeTag() != 'C') {
+        addMessage("该格位没有可用的消耗品！");
+        // 无物品不消耗回合，不重置计时
+        return true;
+    }
+    const std::string itemName = item->name;
+    int restoreHp = 0, restoreMp = 0;
+    if (!p->inventory.useConsumable(invSlot, restoreHp, restoreMp)) {
+        addMessage("使用失败！");
+        return true;
+    }
+    p->stats.hp = std::min(p->stats.hp + restoreHp, p->stats.maxHp);
+    p->stats.mp = std::min(p->stats.mp + restoreMp, p->stats.maxMp);
+    addMessage(p->name + "使用了 " + itemName + "，恢复 " + std::to_string(restoreHp) +
+              " 生命、" + std::to_string(restoreMp) + " 法力。");
+
+    p->lastCombatAtMs = nowMs();
     Monster* m = combatMonster(*p);
-    if (!m) {
-        p->inCombat = false;
-        p->combatSlot = -1;
-        return false;
-    }
-
-    if (action == FightAction::Flee) {
-        p->inCombat = false;
-        p->combatSlot = -1;
-        addMessage("你逃跑了！");
-        return true;
-    }
-
-    const int raw = (action == FightAction::Skill) ? static_cast<int>(p->stats.atk * 1.5f)
-                                                   : p->stats.atk;
-    const int damage = std::max(1, raw - m->stats.def);
-    m->stats.hp -= damage;
-    addMessage("你对" + m->name + "造成了 " + std::to_string(damage) + " 点伤害。");
-
-    if (m->stats.hp <= 0) {
-        grantRewards(*p, *m);
-        p->inCombat = false;
-        mapOf(*p).respawnMonsterAt(p->pos.x, p->pos.y, p->combatSlot);
-        p->combatSlot = -1;
-        return true;
-    }
-
-    const int mDamage = std::max(1, m->stats.atk - p->stats.def);
-    p->stats.hp -= mDamage;
-    addMessage(m->name + "对你造成了 " + std::to_string(mDamage) + " 点伤害。");
-
-    if (p->stats.hp <= 0) {
-        p->stats.hp = p->stats.maxHp / 2;
-        p->stats.mp = p->stats.maxMp / 2;
-        p->inCombat = false;
-        p->combatSlot = -1;
-        addMessage("战斗失败，你灰溜溜地逃回了营地。");
-    }
+    if (m) counterAttack(*p, *m);
     return true;
+}
+
+bool GameState::fleeCombat(int id) {
+    Player* p = findPlayer(id);
+    if (!p || !p->inCombat) return false;
+    p->inCombat = false;
+    p->combatSlot = -1;
+    addMessage(p->name + "逃跑了！");
+    return true;
+}
+
+// 自动战斗 Tick：每秒对 inCombat 玩家自动普攻一次
+bool GameState::tickCombat(long long nowMsValue) {
+    bool changed = false;
+    for (auto& p : players_) {
+        if (!p.inCombat) continue;
+        if (nowMsValue - p.lastCombatAtMs < kCombatRoundMs) continue;
+        // 可能怪物已被其他玩家击杀
+        Monster* m = combatMonster(p);
+        if (!m) {
+            p.inCombat = false;
+            p.combatSlot = -1;
+            changed = true;
+            continue;
+        }
+        if (normalAttack(p.id)) changed = true;
+    }
+    return changed;
 }
 
 void GameState::grantRewards(Player& p, Monster& m) {
@@ -386,6 +509,14 @@ bool GameState::buyItem(int id, int shopIndex) {
     return true;
 }
 
+bool GameState::tick(long long nowMsValue) {
+    bool changed = false;
+    for (auto& map : maps_) {
+        if (map.tick(nowMsValue)) changed = true;
+    }
+    return changed;
+}
+
 void GameState::addMessage(const std::string& msg) {
     messages_.push_back(msg);
     if (messages_.size() > kMaxRecentMessages) {
@@ -441,6 +572,31 @@ std::string GameState::serializeSnapshot(int selfId) const {
     } else {
         s += "|0";
     }
+
+    // 本地图上所有活着的怪物（用于客户端把怪物画到地图上）
+    if (self) {
+        const WorldMap& map = maps_[self->mapId];
+        int monCount = 0;
+        for (int x = 0; x < kMapSize; ++x) {
+            for (int y = 0; y < kMapSize; ++y) {
+                for (const auto& occ : map.tiles_[x][y].occupants) {
+                    if (!occ.isNpc) ++monCount;
+                }
+            }
+        }
+        s += "|" + std::to_string(monCount);
+        for (int x = 0; x < kMapSize; ++x) {
+            for (int y = 0; y < kMapSize; ++y) {
+                for (const auto& occ : map.tiles_[x][y].occupants) {
+                    if (occ.isNpc) continue;
+                    s += "|" + std::to_string(x) + ":" + std::to_string(y) + ":" + occ.name + ":"
+                         + std::to_string(occ.level) + ":" + std::to_string(static_cast<int>(occ.quality));
+                }
+            }
+        }
+    } else {
+        s += "|0";
+    }
     return s;
 }
 
@@ -450,14 +606,7 @@ bool GameState::saveToFile(const std::string& path) const {
 
     out << players_.size() << "\n";
     for (const auto& p : players_) {
-        out << p.id << "\n" << p.name << "\n";
-        out << p.level << " " << p.gold << " " << p.exp << " " << p.maxExp << "\n";
-        out << p.stats.hp << " " << p.stats.maxHp << " " << p.stats.mp << " "
-            << p.stats.maxMp << " " << p.stats.atk << " " << p.stats.def << "\n";
-        out << p.mapId << " " << p.pos.x << " " << p.pos.y << "\n";
-        out << p.missionId << " " << static_cast<int>(p.missionState) << "\n";
-        out << "INV " << p.inventory.serializeItems() << "\n";
-        out << "EQUIP " << p.inventory.serializeEquipment() << "\n";
+        out << p.serialize();
     }
     return true;
 }
@@ -470,35 +619,9 @@ bool GameState::loadFromFile(const std::string& path) {
     int count = 0;
     in >> count;
     for (int i = 0; i < count; ++i) {
-        int id = 0;
-        std::string name;
-        in >> id >> name;
-
-        Player p(id, name);
-        in >> p.level >> p.gold >> p.exp >> p.maxExp;
-        in >> p.stats.hp >> p.stats.maxHp >> p.stats.mp >> p.stats.maxMp
-           >> p.stats.atk >> p.stats.def;
-        in >> p.mapId >> p.pos.x >> p.pos.y;
-        int missionState = 0;
-        in >> p.missionId >> missionState;
-        p.missionState = static_cast<MissionState>(missionState);
-
-        std::string tag;
-        in >> tag;  // "INV"
-        std::string invData;
-        std::getline(in, invData);
-        if (!invData.empty() && invData[0] == ' ') invData.erase(0, 1);
-        p.inventory.loadItems(invData);
-
-        in >> tag;  // "EQUIP"
-        std::string equipData;
-        std::getline(in, equipData);
-        if (!equipData.empty() && equipData[0] == ' ') equipData.erase(0, 1);
-        p.inventory.loadEquipment(equipData);
-
-        p.inCombat = false;
-        p.combatSlot = -1;
-        nextPlayerId_ = std::max(nextPlayerId_, id + 1);
+        Player p;
+        if (!p.deserialize(in)) break;
+        nextPlayerId_ = std::max(nextPlayerId_, p.id + 1);
         players_.push_back(std::move(p));
     }
     return !players_.empty();

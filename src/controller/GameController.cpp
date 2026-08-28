@@ -1,11 +1,12 @@
 #include "controller/GameController.h"
 
+#include <climits>
 #include <conio.h>
 #include <iostream>
+#include <string>
 
 #include <windows.h>
 
-#include "model/GameState.h"
 #include "net/NetClient.h"
 
 namespace game {
@@ -14,217 +15,12 @@ namespace {
 std::vector<std::string> toVector(const std::deque<std::string>& d) {
     return std::vector<std::string>(d.begin(), d.end());
 }
-
-WorldSnapshot refreshSnapshot(GameState& state, int selfId) {
-    WorldSnapshot snap;
-    parseSnapshot(state.serializeSnapshot(selfId), snap);
-    return snap;
-}
 }  // namespace
-
-int GameController::runLocal() {
-    state_ = std::make_unique<GameState>();
-    const int selfId = doLocalLogin();
-    if (selfId < 0) return 0;
-    localMainLoop(selfId);
-    return 0;
-}
 
 GameController::GameController() = default;
 GameController::~GameController() = default;
 
-int GameController::doLocalLogin() {
-    while (true) {
-        renderer_.printLoginMenu();
-        const char key = static_cast<char>(_getch());
-        switch (key) {
-            case '1': {
-                renderer_.clear();
-                std::cout << "请输入角色名称:" << std::endl;
-                renderer_.present();
-                std::string name;
-                std::cin >> name;
-                const auto& p = state_->addPlayer(name);
-                state_->addMessage("欢迎来到冒险大陆，" + p.name + "！");
-                return p.id;
-            }
-            case '2': {
-                if (state_->loadFromFile("savegame.txt")) {
-                    state_->addMessage("读取存档成功。");
-                    return state_->players().front().id;
-                }
-                renderer_.printMessage("未找到存档文件。");
-                break;
-            }
-            case '3':
-                renderer_.printAbout();
-                break;
-            case '4':
-                return -1;
-            default:
-                break;
-        }
-    }
-}
-
-void GameController::localMainLoop(int selfId) {
-    bool running = true;
-    while (running) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printMain(snap, state_->messages());
-
-        const char key = static_cast<char>(_getch());
-        switch (key) {
-            case 'w': state_->movePlayer(selfId, Direction::Up); break;
-            case 's': state_->movePlayer(selfId, Direction::Down); break;
-            case 'a': state_->movePlayer(selfId, Direction::Left); break;
-            case 'd': state_->movePlayer(selfId, Direction::Right); break;
-            case '1':
-            case '2':
-            case '3': {
-                const int slot = key - '1';
-                if (slot >= 0 && slot < static_cast<int>(snap.occupants.size())) {
-                    if (snap.occupants[slot].isNpc) {
-                        localDialogueLoop(selfId, slot);
-                    } else if (state_->startFight(selfId, slot)) {
-                        localCombatLoop(selfId);
-                    }
-                }
-                break;
-            }
-            case 'i': localInventoryLoop(selfId); break;
-            case 'c': localStatusLoop(selfId); break;
-            case 'm': localMissionLoop(selfId); break;
-            case 'p':
-                if (state_->saveToFile("savegame.txt")) {
-                    state_->addMessage("游戏已保存。");
-                } else {
-                    state_->addMessage("保存失败！");
-                }
-                break;
-            case 'q':
-            case 'Q':
-                running = false;
-                break;
-            default:
-                break;
-        }
-    }
-}
-
-void GameController::localCombatLoop(int selfId) {
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        const PlayerView* self = findSelf(snap);
-        if (!self || !self->inCombat) return;
-
-        renderer_.printCombat(snap);
-        const char key = static_cast<char>(_getch());
-        switch (key) {
-            case '1': state_->fightRound(selfId, FightAction::Attack); break;
-            case '2': state_->fightRound(selfId, FightAction::Skill); break;
-            case '3': localInventoryLoop(selfId); break;
-            case '4': state_->fightRound(selfId, FightAction::Flee); break;
-            default: break;
-        }
-    }
-}
-
-void GameController::localDialogueLoop(int selfId, int slot) {
-    state_->talkToNpc(selfId, slot);
-
-    auto snap = refreshSnapshot(*state_, selfId);
-    NpcRole role = NpcRole::None;
-    if (slot >= 0 && slot < static_cast<int>(snap.occupants.size())) {
-        role = snap.occupants[slot].role;
-    }
-    const bool hasShop = role == NpcRole::Merchant || role == NpcRole::Blacksmith;
-
-    while (true) {
-        renderer_.printNpcMenu(state_->messages(), hasShop);
-        const char key = static_cast<char>(_getch());
-        if (key == '1') {
-            localMissionLoop(selfId);
-        } else if (key == '2' && hasShop) {
-            localShopLoop(selfId, role);
-        } else if (key == '3' || key == 'l' || key == 'L') {
-            return;
-        }
-        snap = refreshSnapshot(*state_, selfId);
-    }
-}
-
-void GameController::localShopLoop(int selfId, NpcRole role) {
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printShop(snap, role);
-        const char key = static_cast<char>(_getch());
-        if (key >= '1' && key <= '9') {
-            state_->buyItem(selfId, key - '1');
-        } else if (key == 'l' || key == 'L') {
-            return;
-        }
-    }
-}
-
-void GameController::localInventoryLoop(int selfId) {
-    int page = 0;
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printInventory(snap, page);
-        const char key = static_cast<char>(_getch());
-        if (key >= '0' && key <= '9') {
-            localItemDetail(selfId, page * 10 + (key - '0'));
-        } else if (key == 'j' || key == 'J') {
-            if (page < 2) ++page;
-        } else if (key == 'k' || key == 'K') {
-            if (page > 0) --page;
-        } else if (key == 'l' || key == 'L') {
-            return;
-        }
-    }
-}
-
-void GameController::localItemDetail(int selfId, int slot) {
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printItemDetail(snap, slot);
-        const char key = static_cast<char>(_getch());
-        if (key == 'j' || key == 'J') {
-            state_->useItem(selfId, slot);
-            return;
-        }
-        if (key == 'k' || key == 'K') {
-            state_->dropItem(selfId, slot);
-            return;
-        }
-        if (key == 's' || key == 'S') {
-            state_->sellItem(selfId, slot);
-            return;
-        }
-        if (key == 'l' || key == 'L') return;
-    }
-}
-
-void GameController::localStatusLoop(int selfId) {
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printStatus(snap);
-        const char key = static_cast<char>(_getch());
-        if (key == 'l' || key == 'L') return;
-    }
-}
-
-void GameController::localMissionLoop(int selfId) {
-    while (true) {
-        const auto snap = refreshSnapshot(*state_, selfId);
-        renderer_.printMission(snap);
-        const char key = static_cast<char>(_getch());
-        if (key == 'l' || key == 'L') return;
-    }
-}
-
-// ---------------- 联机客户端 ----------------
+// ---------------- 登录 / 注册 ----------------
 
 int GameController::runClient(const std::string& host, int port) {
     NetClient client;
@@ -233,17 +29,17 @@ int GameController::runClient(const std::string& host, int port) {
         return 1;
     }
 
-    renderer_.clear();
-    std::cout << "请输入角色名称:" << std::endl;
-    renderer_.present();
-    std::string name;
-    std::cin >> name;
-    client.sendCommand("LOGIN " + sanitizeName(name));
-
     std::deque<std::string> messages;
     WorldSnapshot snap;
+
+    // 登录注册循环，直到登录成功或用户退出
+    if (!loginLoop(client, messages, snap)) {
+        return 0;
+    }
+
+    // ---- 游戏主循环 ----
     bool running = true;
-    bool dirty = true;  // 只在“有新数据”或“按了键”时重绘，避免无操作时闪屏
+    bool dirty = true;
     while (running) {
         const PumpResult result = client.pump(messages, snap);
         if (result == PumpResult::Disconnected) {
@@ -258,35 +54,47 @@ int GameController::runClient(const std::string& host, int port) {
             const bool inCombat = self && self->inCombat;
             dirty = true;
 
-            if (key == 'w' || key == 'a' || key == 's' || key == 'd') {
-                const char* dir = key == 'w' ? "u" : key == 's' ? "d" : key == 'a' ? "l" : "r";
-                client.sendCommand(std::string("MOVE ") + dir);
-            } else if (key == '1' || key == '2' || key == '3' || key == '4') {
-                const int slot = key - '1';
-                if (inCombat) {
-                    if (key == '1') client.sendCommand("ATK");
-                    else if (key == '2') client.sendCommand("SKILL");
-                    else if (key == '3') clientInventoryMode(client, messages, snap);
-                    else if (key == '4') client.sendCommand("FLEE");
-                } else if (key != '4' && slot >= 0 && slot < static_cast<int>(snap.occupants.size())) {
-                    if (snap.occupants[slot].isNpc) {
-                        client.sendCommand("TALK " + std::to_string(slot));
-                        clientDialogueMode(client, messages, snap, slot);
-                    } else {
-                        client.sendCommand("FIGHT " + std::to_string(slot));
-                    }
+            if (inCombat) {
+                // ---- 战斗中 ----
+                if (key == 'q' || key == 'Q') {
+                    client.sendCommand("SKILL 0");       // 强击
+                } else if (key == 'w' || key == 'W') {
+                    client.sendCommand("SKILL 1");       // 连斩
+                } else if (key == 'e' || key == 'E') {
+                    client.sendCommand("SKILL 2");       // 治疗术
+                } else if (key == 'r' || key == 'R') {
+                    client.sendCommand("SKILL 3");       // 必杀技
+                } else if (key == '1') {
+                    client.sendCommand("CUSE 0");       // 消耗品格1
+                } else if (key == '2') {
+                    client.sendCommand("CUSE 1");       // 消耗品格2
+                } else if (key == '3') {
+                    client.sendCommand("CUSE 2");       // 消耗品格3
+                } else if (key == '4') {
+                    client.sendCommand("CUSE 3");       // 消耗品格4
+                } else if (key == 'f' || key == 'F') {
+                    client.sendCommand("FLEE");        // 逃跑
                 }
-            } else if (key == 'i') {
-                clientInventoryMode(client, messages, snap);
-            } else if (key == 'c') {
-                clientStatusMode(client, messages, snap);
-            } else if (key == 'm') {
-                clientMissionMode(client, messages, snap);
-            } else if (key == 'p') {
-                client.sendCommand("SAVE");
-            } else if (key == 'q' || key == 'Q') {
-                client.sendCommand("QUIT");
-                running = false;
+            } else {
+                // ---- 探索中 ----
+                if (key == 'w' || key == 'a' || key == 's' || key == 'd') {
+                    const char* dir = key == 'w' ? "u" : key == 's' ? "d" : key == 'a' ? "l" : "r";
+                    client.sendCommand(std::string("MOVE ") + dir);
+                } else if (key == '1' && !snap.occupants.empty() && snap.occupants[0].isNpc) {
+                    client.sendCommand("TALK 0");
+                    clientDialogueMode(client, messages, snap, 0);
+                } else if (key == 'i') {
+                    clientInventoryMode(client, messages, snap);
+                } else if (key == 'c') {
+                    clientStatusMode(client, messages, snap);
+                } else if (key == 'm') {
+                    clientMissionMode(client, messages, snap);
+                } else if (key == 'p') {
+                    client.sendCommand("SAVE");
+                } else if (key == 27) {  // Esc 退出
+                    client.sendCommand("QUIT");
+                    running = false;
+                }
             }
         }
 
@@ -298,6 +106,162 @@ int GameController::runClient(const std::string& host, int port) {
     }
     return 0;
 }
+
+// 登录注册主菜单循环，返回 true 表示已进入游戏，false 表示用户选择退出
+bool GameController::loginLoop(NetClient& client, std::deque<std::string>& messages,
+                               WorldSnapshot& snap) {
+    while (true) {
+        // 先消费掉服务器推送的欢迎/提示消息，显示在登录菜单下方
+        bool gotMsg = false;
+        while (pumpOnce(client, messages, snap)) {
+            if (!snap.players.empty()) return true;  // 已登录（收到 STATE）
+            gotMsg = true;
+        }
+
+        renderer_.clear();
+        renderer_.setColor(ConsoleColor::Yellow);
+        std::cout << "================ 冒险大陆 ================\n";
+        std::cout << "+           1. 登录账号                 +\n";
+        std::cout << "+           2. 注册账号                 +\n";
+        std::cout << "+           3. 关于制作                 +\n";
+        std::cout << "+           4. 退出游戏                 +\n";
+        std::cout << "==========================================\n";
+        renderer_.setColor(ConsoleColor::Normal);
+        if (gotMsg) {
+            // 显示最近一条服务器消息
+            for (const auto& m : messages) {
+                std::cout << "> " << m << "\n";
+            }
+        }
+        renderer_.present();
+
+        const char key = static_cast<char>(_getch());
+        if (key == '1') {
+            if (doLoginInput(client, messages, snap)) return true;
+        } else if (key == '2') {
+            doRegisterInput(client, messages, snap);
+        } else if (key == '3') {
+            renderer_.printAbout();
+        } else if (key == '4' || key == 'q' || key == 'Q') {
+            client.sendCommand("QUIT");
+            return false;
+        }
+    }
+}
+
+bool GameController::doLoginInput(NetClient& client, std::deque<std::string>& messages,
+                                  WorldSnapshot& snap) {
+    renderer_.clear();
+    renderer_.setColor(ConsoleColor::Yellow);
+    std::cout << "===== 登录 =====\n";
+    renderer_.setColor(ConsoleColor::Normal);
+    std::cout << "账号: ";
+    renderer_.present();
+    std::string user;
+    std::cin >> user;
+    std::cin.ignore(INT_MAX, '\n');
+
+    renderer_.clear();
+    std::cout << "密码: ";
+    renderer_.present();
+    std::string pass;
+    std::cin >> pass;
+    std::cin.ignore(INT_MAX, '\n');
+
+    // 清除控制台输入缓冲中残留的事件，避免干扰游戏循环的 _kbhit()
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+
+    client.sendCommand("LOGIN " + user + " " + pass);
+
+    // 等待服务器响应：持续拉取，收到 STATE 视为成功，收到 ERR 视为失败，超时报错
+    for (int i = 0; i < 200; ++i) {  // 约 2 秒超时
+        const size_t before = messages.size();
+        if (pumpOnce(client, messages, snap)) {
+            if (!snap.players.empty()) return true;  // 收到 STATE，登录成功
+            // 检查是否收到 ERR（NetClient 把 ERR 转成 "[系统] ..."）
+            bool gotErr = false;
+            for (size_t j = before; j < messages.size(); ++j) {
+                if (messages[j].rfind("[系统]", 0) == 0) { gotErr = true; break; }
+            }
+            if (gotErr) {
+                renderer_.clear();
+                renderer_.setColor(ConsoleColor::Red);
+                for (const auto& m : messages) std::cout << "> " << m << "\n";
+                renderer_.setColor(ConsoleColor::Normal);
+                std::cout << "\n按任意键返回...";
+                renderer_.present();
+                messages.clear();
+                _getch();
+                return false;
+            }
+            // 仅收到 MSG（如欢迎语），继续等待 STATE
+        }
+        Sleep(10);
+    }
+    renderer_.printMessage("登录超时，请重试。");
+    return false;
+}
+
+bool GameController::doRegisterInput(NetClient& client, std::deque<std::string>& messages,
+                                     WorldSnapshot& snap) {
+    renderer_.clear();
+    renderer_.setColor(ConsoleColor::Yellow);
+    std::cout << "===== 注册 =====\n";
+    renderer_.setColor(ConsoleColor::Normal);
+    std::cout << "账号(>=3位,无空格): ";
+    renderer_.present();
+    std::string user;
+    std::cin >> user;
+    std::cin.ignore(INT_MAX, '\n');
+
+    renderer_.clear();
+    std::cout << "密码(>=3位,无空格): ";
+    renderer_.present();
+    std::string pass;
+    std::cin >> pass;
+    std::cin.ignore(INT_MAX, '\n');
+
+    renderer_.clear();
+    std::cout << "角色名: ";
+    renderer_.present();
+    std::string charName;
+    std::cin >> charName;
+    std::cin.ignore(INT_MAX, '\n');
+
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+
+    client.sendCommand("REGISTER " + user + " " + pass + " " + charName);
+
+    for (int i = 0; i < 200; ++i) {
+        if (pumpOnce(client, messages, snap)) {
+            renderer_.clear();
+            renderer_.setColor(ConsoleColor::Green);
+            for (const auto& m : messages) std::cout << "> " << m << "\n";
+            renderer_.setColor(ConsoleColor::Normal);
+            std::cout << "\n按任意键返回登录菜单...";
+            renderer_.present();
+            messages.clear();
+            _getch();
+            return false;  // 注册不自动登录
+        }
+        Sleep(10);
+    }
+    renderer_.printMessage("注册超时，请重试。");
+    return false;
+}
+
+// 拉取一帧服务器消息；返回 true 表示收到了任意 MSG/STATE/ERR
+bool GameController::pumpOnce(NetClient& client, std::deque<std::string>& messages,
+                              WorldSnapshot& snap) {
+    const PumpResult r = client.pump(messages, snap);
+    if (r == PumpResult::Disconnected) {
+        renderer_.printMessage("与服务器断开连接。");
+        std::exit(1);
+    }
+    return r == PumpResult::Updated;
+}
+
+// ---------------- 各游戏界面（联机） ----------------
 
 void GameController::clientDialogueMode(NetClient& client, std::deque<std::string>& messages,
                                         WorldSnapshot& snap, int slot) {

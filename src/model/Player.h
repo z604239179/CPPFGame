@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include <string>
 
 #include "common/Common.h"
@@ -10,7 +11,12 @@ namespace game {
 // 玩家（Model）：只包含状态与数据，不包含输入/输出逻辑
 class Player {
 public:
+    Player() = default;
     Player(int id, std::string name);
+
+    // 单玩家存档序列化 / 反序列化（与 GameState 存档格式兼容）
+    std::string serialize() const;
+    bool deserialize(std::istream& in);
 
     int id = 0;
     std::string name;
@@ -28,6 +34,7 @@ public:
 
     bool inCombat = false;
     int combatSlot = -1;
+    long long lastCombatAtMs = 0;  // 上一次战斗出手时间（毫秒单调时钟，用于自动回合）
 };
 
 }  // namespace game

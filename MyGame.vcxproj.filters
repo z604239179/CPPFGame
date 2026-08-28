@@ -74,6 +74,9 @@
     <ClInclude Include="src\net\NetServer.h">
       <Filter>Network</Filter>
     </ClInclude>
+    <ClInclude Include="src\net\AccountManager.h">
+      <Filter>Network</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp">
@@ -122,6 +125,9 @@
       <Filter>Network</Filter>
     </ClCompile>
     <ClCompile Include="src\net\NetServer.cpp">
+      <Filter>Network</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\AccountManager.cpp">
       <Filter>Network</Filter>
     </ClCompile>
   </ItemGroup>
